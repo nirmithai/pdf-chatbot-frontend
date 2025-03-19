@@ -19,9 +19,7 @@ import "react-toastify/dist/ReactToastify.css";
 import jsPDF from "jspdf";
 import html2canvas from "html2canvas";
 
-
-pdfjs.GlobalWorkerOptions.workerSrc =
-  "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js";
+pdfjs.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js";
 
 function App() {
   const [file, setFile] = useState<File | null>(null);
@@ -35,6 +33,7 @@ function App() {
   const summaryRef = useRef<HTMLDivElement>(null);
   const [copied, setCopied] = useState(false);
   const [renderKey, setRenderKey] = useState(0);
+  const [pdfLoading, setPdfLoading] = useState(false);
 
   useEffect(() => {
     setRenderKey((prev) => prev + 1);
@@ -49,7 +48,6 @@ function App() {
     setFile(selectedFile);
     extractPageCount(selectedFile);
   };
-
 
   const extractPageCount = async (selectedFile: File) => {
     try {
@@ -72,7 +70,6 @@ function App() {
       setTotalPages(null);
     }
   };
-
 
   const handleUpload = async () => {
     if (!file) {
@@ -104,7 +101,6 @@ function App() {
     formData.append("summary_type", summaryType);
 
     try {
-
       const response = await fetch(`${import.meta.env.VITE_BACKEND}upload_pdf/`, {
         method: "POST",
         body: formData,
@@ -122,7 +118,7 @@ function App() {
         completion_tokens: data.completion_tokens ?? "N/A",
         total_time: data.total_time ?? "N/A",
         total_pages: totalPages ?? "N/A",
-        pdf_filename: data.pdf_filename ?? null, // <--- IMPORTANT
+        pdf_filename: data.pdf_filename ?? null,
       });
     } catch (error) {
       console.error("Error uploading PDF:", error);
@@ -132,7 +128,6 @@ function App() {
     }
   };
 
-
   const handleCopy = () => {
     if (!summary || !summaryRef.current) return;
     navigator.clipboard
@@ -141,149 +136,138 @@ function App() {
         setCopied(true);
         setTimeout(() => setCopied(false), 2000);
       })
+      .catch((err) => {
+        console.error("Failed to copy text: ", err);
+      });
   };
 
-
   const handleDownloadPDF = async () => {
-    if (!summary) return;
+    if (!summary || !summaryRef.current) return;
   
-    const summaryElement = summaryRef.current;
-    if (!summaryElement) {
-      toast.error("Summary element not found");
-      return;
-    }
-  
+    setPdfLoading(true);
     try {
-      // Show loading toast
       const loadingToast = toast.info("Generating PDF...", { autoClose: false });
   
-      // Create PDF document
-      const pdf = new jsPDF({
-        orientation: "portrait",
-        unit: "pt",
-        format: "a4"
-      });
+      // Create a temporary container to hold the cloned content
+      const tempContainer = document.createElement("div");
+      tempContainer.style.width = "800px";
+      tempContainer.style.padding = "20px";
+      tempContainer.style.backgroundColor = "white";
+      tempContainer.style.position = "absolute";
+      tempContainer.style.left = "-9999px";
+      tempContainer.style.top = "-9999px";
   
-      // Get PDF page dimensions
-      const pageWidth = pdf.internal.pageSize.getWidth();
-      const pageHeight = pdf.internal.pageSize.getHeight();
-      const margin = 40; // Margins for content
-  
-      // Add header to the first page
-      pdf.setFillColor(20, 184, 166);
-      pdf.rect(0, 0, pageWidth, 60, 'F');
-      pdf.setFontSize(16);
-      pdf.setTextColor(255, 255, 255);
-      pdf.text('PDF Summarizer', pageWidth / 2, 30, { align: 'center' });
-      
-      // Clone the summary element to work with
-      const tempContainer = document.createElement('div');
-      tempContainer.style.width = `${pageWidth - 2 * margin}px`;
-      tempContainer.style.padding = `${margin}px`;
-      tempContainer.style.position = 'absolute';
-      tempContainer.style.left = '-9999px';
-      tempContainer.style.top = '-9999px';
-      tempContainer.style.backgroundColor = 'white';
-      tempContainer.style.fontFamily = 'Arial, sans-serif';
-      tempContainer.style.fontSize = '12pt';
-      tempContainer.style.lineHeight = '1.5';
-      
-      // Clone and append content
-      const clonedContent = summaryElement.cloneNode(true);
+      // Clone the summary content
+      const clonedContent = summaryRef.current.cloneNode(true) as HTMLElement;
       tempContainer.appendChild(clonedContent);
       document.body.appendChild(tempContainer);
-      
-      // Calculate how many elements fit on each page
-      const contentElements = Array.from(tempContainer.querySelectorAll('p, h1, h2, h3, h4, h5, h6, ul, ol, table, pre, blockquote'));
-      
-      if (contentElements.length === 0) {
-        // If no elements found, try to use the text content directly
-        const textContent = summaryElement.textContent || summary;
-        const textLines = pdf.splitTextToSize(textContent, pageWidth - 2 * margin);
+  
+      // Render LaTeX expressions with proper configuration
+      renderMathInElement(clonedContent, {
+        delimiters: [
+          { left: "$$", right: "$$", display: true },
+          { left: "$", right: "$", display: false },
+          { left: "\\(", right: "\\)", display: false },
+          { left: "\\[", right: "\\]", display: true },
+        ],
+        throwOnError: false
+      });
+  
+      // Wait for LaTeX rendering to complete
+      await new Promise(requestAnimationFrame);
+  
+      // Use html2canvas with adjusted settings for better rendering
+      const canvas = await html2canvas(clonedContent, {
+        scale: 2,
+        useCORS: true,
+        logging: false,
+        allowTaint: false,
+        backgroundColor: "#ffffff",
+        // Removed invalid property 'letterRendering'
+      });
+  
+      // Clean up the temporary container
+      document.body.removeChild(tempContainer);
+  
+      // Convert the canvas to an image
+      const imgData = canvas.toDataURL("image/png", 1.0);
+  
+      // Create a new jsPDF document
+      const doc = new jsPDF("p", "mm", "a4");
+      const pageWidth = doc.internal.pageSize.getWidth();
+      const pageHeight = doc.internal.pageSize.getHeight();
+  
+      // Add title to the PDF
+      doc.setFontSize(18);
+      doc.text("PDF Summary", 20, 20);
+  
+      // Calculate image dimensions with proper aspect ratio
+      const imgWidth = pageWidth - 40;
+      const imgHeight = (canvas.height * imgWidth) / canvas.width;
+      let position = 20;
+  
+      // Add image to the first page
+      doc.addImage(imgData, "PNG", 20, position, imgWidth, imgHeight);
+  
+      // Check if content exceeds page height and add additional pages if needed
+      if (imgHeight > pageHeight - 40) {
+        const totalPagesNeeded = Math.ceil(imgHeight / (pageHeight - 40));
         
-        // Add content starting from below the header on first page
-        pdf.setTextColor(0, 0, 0);
-        pdf.setFontSize(12);
-        
-        let yPos = 80; // Start position below header
-        const lineHeight = 15;
-        
-        for (let i = 0; i < textLines.length; i++) {
-          // Check if we need a new page
-          if (yPos > pageHeight - margin) {
-            pdf.addPage();
-            yPos = margin; // Reset Y position on new page
-          }
-          
-          pdf.text(textLines[i], margin, yPos);
-          yPos += lineHeight;
+        for (let i = 1; i < totalPagesNeeded; i++) {
+          doc.addPage();
+          position = i * (pageHeight - 40) + 20;
+          doc.addImage(imgData, "PNG", 20, position, imgWidth, imgHeight);
+        }
+      }
+  
+      // Add page numbers to each page
+      const totalPages = doc.getNumberOfPages();
+      for (let i = 1; i <= totalPages; i++) {
+        doc.setPage(i);
+        doc.setFontSize(10);
+        doc.setTextColor(100, 100, 100);
+        doc.text(
+          `Page ${i} of ${totalPages}`,
+          pageWidth - 20,
+          pageHeight - 10
+        );
+      }
+  
+      // Save the PDF using the appropriate method
+      if ((window as any).showSaveFilePicker) {
+        try {
+          const fileHandle = await (window as any).showSaveFilePicker({
+            suggestedName: `pdf-summary-${new Date().getTime()}.pdf`,
+            types: [
+              {
+                description: "PDF Files",
+                accept: { "application/pdf": [".pdf"] },
+              },
+            ],
+          });
+  
+          const writableStream = await fileHandle.createWritable();
+          const pdfBlob = doc.output("blob");
+          await writableStream.write(pdfBlob);
+          await writableStream.close();
+        } catch (error) {
+          console.error("Error saving PDF:", error);
+          toast.error("Failed to save PDF. Please try again.");
         }
       } else {
-        // Initialize variables for multi-page rendering
-        let currentPage = 1;
-        let yPos = 80; // Start position below header on first page
-        
-        // Process each content element
-        for (let i = 0; i < contentElements.length; i++) {
-          const element = contentElements[i];
-          
-          // Create a canvas from this element
-          const canvas = await html2canvas(element as HTMLElement, {
-            scale: 2,
-            logging: false,
-            useCORS: true,
-            allowTaint: true,
-          });
-          
-          // Convert to image
-          const imgData = canvas.toDataURL("image/png", 1.0);
-          
-          // Calculate dimensions while preserving aspect ratio
-          const imgWidth = pageWidth - 2 * margin;
-          const imgProps = pdf.getImageProperties(imgData);
-          const imgHeight = (imgProps.height * imgWidth) / imgProps.width;
-          
-          // Check if this element will fit on the current page
-          if (yPos + imgHeight > pageHeight - margin) {
-            // Add a new page
-            pdf.addPage();
-            currentPage++;
-            yPos = margin; // Reset Y position
-          }
-          
-          // Add image to PDF
-          pdf.addImage(imgData, 'PNG', margin, yPos, imgWidth, imgHeight);
-          
-          // Update Y position for next element
-          yPos += imgHeight + 10; // Add some spacing between elements
-        }
+        doc.save(`pdf-summary-${new Date().getTime()}.pdf`);
       }
-      
-      // Remove the temporary container
-      document.body.removeChild(tempContainer);
-      
-      // Add page numbers
-      const totalPages = pdf.getNumberOfPages();
-      for (let i = 1; i <= totalPages; i++) {
-        pdf.setPage(i);
-        pdf.setFontSize(10);
-        pdf.setTextColor(100, 100, 100);
-        pdf.text(`Page ${i} of ${totalPages}`, pageWidth - margin, pageHeight - 10);
-      }
-      
-      // Save PDF
-      pdf.save('summary.pdf');
-      
-      // Close loading toast and show success
+  
+      // Clean up
       toast.dismiss(loadingToast);
       toast.success("PDF downloaded successfully!");
     } catch (error) {
       console.error("Error generating PDF:", error);
-      const errorMessage = error instanceof Error ? error.message : "Unknown error";
-      toast.error("Error generating PDF: " + errorMessage);
+      toast.error("Failed to generate PDF. Please try again.");
+    } finally {
+      setPdfLoading(false);
     }
   };
-
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -294,7 +278,6 @@ function App() {
             <FileText className="w-8 h-8" />
             PDF Summarizer
           </h1>
-         
         </div>
       </header>
 
@@ -386,9 +369,9 @@ function App() {
             <div className="bg-white rounded-lg shadow-md p-6 min-h-[600px] relative">
               {/* Action Buttons */}
               <div className="absolute top-4 right-4 flex gap-2">
-              <button
+                <button
                   onClick={handleDownloadPDF}
-                  disabled={!summary}
+                  disabled={!summary || pdfLoading}
                   className="p-2 text-gray-600 hover:text-teal-600 disabled:opacity-50"
                 >
                   <Download className="w-5 h-5" />
@@ -418,6 +401,25 @@ function App() {
                     key={renderKey}
                     remarkPlugins={[remarkGfm, remarkMath]}
                     rehypePlugins={[rehypeKatex]}
+                    components={{
+                      code({ inline, className, children, ...props }: React.HTMLAttributes<HTMLElement> & { inline?: boolean }) {
+                        if (inline) {
+                          return <code className={className} {...props}>{children}</code>;
+                        } 
+                        const match = /language-(\w+)/.exec(className || '');
+                        if (match && match[1] === 'latex') {
+                          return (
+                            <div className="latex-block" {...props as React.HTMLAttributes<HTMLDivElement>}>
+                              <div
+                                className="latex-content"
+                                dangerouslySetInnerHTML={{ __html: Array.isArray(children) ? children.join('') : String(children) }}
+                              />
+                            </div>
+                          );
+                        }
+                        return <pre className={className} {...props as React.HTMLAttributes<HTMLPreElement>}><code>{children}</code></pre>;
+                      }
+                    }}
                   >
                     {summary}
                   </ReactMarkdown>
@@ -457,6 +459,65 @@ function App() {
   );
 }
 
+// Implement proper LaTeX rendering
+function renderMathInElement(element: HTMLElement, options: any) {
+  const katex = (window as any).katex;
+  if (!katex) {
+    console.error("KaTeX not loaded properly");
+    return;
+  }
+
+  const { delimiters, throwOnError } = options;
+  const mathNodes: Node[] = [];
+
+  // Find all text nodes that might contain LaTeX
+  const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT, {
+    acceptNode: (node) => {
+      const text = node.nodeValue?.trim();
+      if (text && delimiters.some((d: { left: string; right: string; }) => text.includes(d.left) && text.includes(d.right))) {
+        return NodeFilter.FILTER_ACCEPT;
+      }
+      return NodeFilter.FILTER_SKIP;
+    }
+  });
+
+  let node: Node | null;
+  while ((node = walker.nextNode() as Node | null)) {
+    const text = node.nodeValue?.trim();
+    if (!text) continue;
+
+    // Check each delimiter
+    for (const delimiter of delimiters) {
+      const regex = new RegExp(`${delimiter.left}([^${delimiter.right}]+)${delimiter.right}`, 'g');
+      let match: RegExpExecArray | null;
+      
+      while ((match = regex.exec(text))) {
+        const latex = match[1].trim();
+        const mathNode = document.createElement('span');
+        mathNode.className = 'katex';
+        
+        try {
+          katex.render(latex, mathNode, {
+            throwOnError,
+            displayMode: delimiter.display
+          });
+        } catch (error) {
+          console.error("Error rendering LaTeX:", error);
+          mathNode.textContent = latex;
+        }
+        
+        node.parentNode?.insertBefore(mathNode, node);
+        mathNodes.push(mathNode);
+      }
+    }
+  }
+
+  // Remove original text nodes if they're empty after processing
+  for (const node of mathNodes) {
+    if (node.nextSibling?.nodeValue?.trim() === '') {
+      node.parentNode?.removeChild(node.nextSibling);
+    }
+  }
+}
+
 export default App;
-
-
