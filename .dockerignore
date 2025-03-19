@@ -1,0 +1,19 @@
+# Node modules
+node_modules/
+npm-debug.log
+yarn.lock
+
+# Logs
+logs/
+*.log
+
+# Environment variables
+
+
+# Build output
+dist/
+
+# Editor settings
+.vscode/
+.idea/
+.DS_Store
