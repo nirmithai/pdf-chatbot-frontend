@@ -1,4 +1,4 @@
-name: Ask your notes frontend
+name: PDF summarizer frontend
 
 on:
   push:
